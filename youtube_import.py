@@ -106,7 +106,7 @@ def fetch_youtube_audio(url: str) -> dict:
         raise AudioError("YouTube import is not installed. Add yt-dlp to requirements.txt.") from exc
 
     diagnostics = youtube_import_diagnostics()
-    if diagnostics["node"] == "missing" or diagnostics["node"] == "installed but not working":
+    if diagnostics["node"] == "missing" or diagnostics["node"] == "installed but not working" or (diagnostics["node"].startswith("v") and int(diagnostics["node"][1:].split(".")[0]) < 22):
         raise AudioError("YouTube support is not configured: Node.js 22+ runtime was not found. Redeploy to install the updated dependencies.")
     if diagnostics["yt-dlp-ejs"] == "missing":
         raise AudioError("YouTube support is not configured: yt-dlp-ejs is missing. Redeploy to install the updated dependencies.")

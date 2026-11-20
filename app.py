@@ -13,7 +13,7 @@ from audio_engine import (
     curve_preview, decode_selection, encode_audio, inspect_audio,
     process_audio, write_upload,
 )
-from youtube_import import fetch_youtube_audio
+from youtube_import import fetch_youtube_audio, youtube_import_diagnostics
 
 st.set_page_config(page_title="RingRise Studio · Ringtone Maker", page_icon="🎧",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -66,6 +66,12 @@ if source_choice.startswith("🔗"):
             except (AudioError, ValueError, OSError) as exc:
                 st.error(str(exc))
     st.caption("Individual song/video links only (not playlists). YouTube may refuse automated downloading on free hosting. This app does not bypass sign-in, DRM, or access restrictions.")
+    with st.expander("YouTube import diagnostics"):
+        diagnostic = youtube_import_diagnostics()
+        for name, version in diagnostic.items():
+            st.write(f"**{name}:** {version}")
+        st.caption("These checks confirm installed dependencies, not that YouTube will authorize or deliver the audio stream.")
+
 else:
     uploaded = st.file_uploader("Upload your audio or video",
                                 type=["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "mp4", "webm", "mov", "mkv"],

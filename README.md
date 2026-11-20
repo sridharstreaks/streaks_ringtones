@@ -69,3 +69,17 @@ versions. YouTube can still require sign-in or deny requests from cloud hosting,
 and these restrictions are not bypassed. No cookies or user credentials are taken.
 If it fails on Streamlit Community Cloud, test the same permitted link using
 your locally hosted copy of the app and inspect the specific error category.
+
+## YouTube metadata preflight and HTTP 403 diagnostics
+
+In **YouTube / YouTube Music link**, expand **Advanced: check link availability without downloading** and paste a single track URL. This probes metadata without downloading the media. It shows up to two distinct audio-only format candidates; this does *not* prove the media transfer will succeed.
+
+Click **Fetch audio from link** to attempt the preferred format. If YouTube returns HTTP 403 during transfer, RingRise tries at most one alternate advertised audio format (when present), then stops. The **Failure details (safe to share)** panel reports whether the failure occurred during dependencies, metadata, format discovery or media transfer. It does not print session cookies, signed playback URLs, or raw download logs.
+
+The user's [Streaks-Movies project](https://github.com/sridharstreaks/Streaks-Movies/blob/main/streamlit/movierulz.py) uses short-lived Selenium/Chrome sessions to inspect webpages and network events. RingRise intentionally does not copy that browser scraping workflow: a browser on Streamlit Community Cloud still uses its cloud IP and cannot guarantee access to YouTube's protected media. No browser login sessions or authentication cookies are retained by RingRise.
+
+Run the network-free regression tests with:
+
+```bash
+python -m unittest test_youtube_import.py
+```

@@ -13,6 +13,7 @@ from audio_engine import (
     curve_preview, decode_selection, encode_audio, inspect_audio,
     process_audio, write_upload,
 )
+from youtube_import import fetch_youtube_audio
 
 st.set_page_config(page_title="RingRise Studio · Ringtone Maker", page_icon="🎧",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -36,45 +37,84 @@ hr{border-color:#2d3b4f!important;}
 </style>''', unsafe_allow_html=True)
 
 st.markdown('''<section class="hero"><span class="pill">FREE · NO ACCOUNT · AUDIO STAYS IN THIS SESSION</span>
-<h1>🎧 RingRise Studio</h1><p class="subtitle">A ringtone that starts gently and gets easier to hear.
-Clean up your audio, separate the <b>opening softness</b> from the <b>overall loudness</b>, and download phone-ready files.</p></section>''', unsafe_allow_html=True)
+<h1>🎧 RingRise Studio</h1><p class="subtitle">Paste a YouTube / YouTube Music link or upload audio/video. Trim, clean, adjust speed and pitch, master the loudness, and make ringtones with a gentle start.</p></section>''', unsafe_allow_html=True)
 
-uploaded = st.file_uploader("Upload your music or sound", type=["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"],
-                            help="Maximum 25 MB. Works with uploaded audio only; no online music downloading.")
-if not uploaded:
-    st.info("↑ Upload an MP3, WAV, M4A, FLAC, or OGG file to begin. The original music isn't included in this app's code.")
-    st.markdown("**Designed around your requests:** quiet first ring · audible by 10 seconds · strong finish · no sudden loudness jump.")
+st.markdown('<div class="step">01 · Get your audio</div>', unsafe_allow_html=True)
+source_choice = st.radio("Source", ["🔗 YouTube / YouTube Music link", "📁 Upload audio or video"],
+                         horizontal=True, label_visibility="collapsed")
+if source_choice.startswith("🔗"):
+    with st.form("youtube_import_form", border=True):
+        youtube_url = st.text_input("Paste a YouTube or YouTube Music link",
+                                    placeholder="https://music.youtube.com/watch?v=... or https://youtu.be/...")
+        permitted = st.checkbox("I own this recording or have permission to download and edit it, including under the platform's terms.")
+        fetch_clicked = st.form_submit_button("🔗 Fetch audio from link", type="primary", use_container_width=True)
+    if fetch_clicked:
+        if not permitted:
+            st.warning("Please confirm you have the necessary permission before fetching the audio.")
+        else:
+            try:
+                with st.spinner("Fetching the audio…"):
+                    fetched = fetch_youtube_audio(youtube_url)
+                    incoming_path = write_upload(fetched["data"], Path(fetched["name"]).suffix)
+                    try:
+                        fetched["info"] = inspect_audio(incoming_path)
+                    finally:
+                        incoming_path.unlink(missing_ok=True)
+                    st.session_state["source"] = fetched
+                    st.session_state.pop("result", None)
+                st.success("Audio imported. Adjust the settings below.")
+            except (AudioError, ValueError, OSError) as exc:
+                st.error(str(exc))
+    st.caption("Individual song/video links only (not playlists). YouTube may refuse automated downloading on free hosting. This app does not bypass sign-in, DRM, or access restrictions.")
+else:
+    uploaded = st.file_uploader("Upload your audio or video",
+                                type=["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "mp4", "webm", "mov", "mkv"],
+                                help="Up to 60 MB and 10 minutes; audio is extracted from videos automatically.")
+    if uploaded:
+        data = uploaded.getvalue()
+        if len(data) > MAX_UPLOAD_BYTES:
+            st.error("Choose a file smaller than 60 MB.")
+            st.stop()
+        digest = hashlib.sha256(data).hexdigest()
+        if st.session_state.get("source", {}).get("fingerprint") != digest:
+            st.session_state["source"] = {"data": data, "name": uploaded.name,
+                                           "title": uploaded.name, "mime": uploaded.type or "audio/mpeg",
+                                           "fingerprint": digest, "origin": "Uploaded file"}
+            st.session_state.pop("result", None)
+
+source = st.session_state.get("source")
+expected_origin = "YouTube link" if source_choice.startswith("🔗") else "Uploaded file"
+if not source or source.get("origin") != expected_origin:
+    st.info("↑ Paste a link and click Fetch audio, or switch to Upload audio/video to use a local recording.")
     st.stop()
 
-file_bytes = uploaded.getvalue()
-if len(file_bytes) > MAX_UPLOAD_BYTES:
-    st.error("That file is over 25 MB. Please upload a smaller file.")
-    st.stop()
-
-fingerprint = hashlib.sha256(file_bytes).hexdigest()
-if st.session_state.get("file_hash") != fingerprint:
-    st.session_state["file_hash"] = fingerprint
-    st.session_state.pop("result", None)
-
-with st.spinner("Reading audio information…"):
-    src_path = None
+file_bytes = source["data"]
+fingerprint = source.get("fingerprint") or hashlib.sha256(file_bytes).hexdigest()
+source["fingerprint"] = fingerprint
+if "info" not in source:
+    input_path = None
     try:
-        src_path = write_upload(file_bytes, Path(uploaded.name).suffix)
-        info = inspect_audio(src_path)
+        with st.spinner("Reading audio information…"):
+            input_path = write_upload(file_bytes, Path(source["name"]).suffix)
+            source["info"] = inspect_audio(input_path)
     except AudioError as exc:
         st.error(str(exc))
         st.stop()
     finally:
-        if src_path:
-            src_path.unlink(missing_ok=True)
+        if input_path:
+            input_path.unlink(missing_ok=True)
+info = source["info"]
 
 left, right = st.columns([1, 1])
 with left:
-    st.markdown('<div class="step">01 · Your audio</div>', unsafe_allow_html=True)
-    st.audio(file_bytes, format=uploaded.type or "audio/mpeg")
-    st.caption(f"{uploaded.name} · {info['duration']:.1f}s · {info['sample_rate']:,} Hz · {len(file_bytes)/1024**2:.2f} MB")
+    st.markdown('<div class="step">02 · Source preview</div>', unsafe_allow_html=True)
+    if source["name"].lower().endswith((".mp4", ".mov", ".mkv")):
+        st.video(file_bytes)
+    else:
+        st.audio(file_bytes, format=source.get("mime") or "audio/mpeg")
+    st.caption(f"{source['title']} · {info['duration']:.1f}s · {info['sample_rate']:,} Hz · {len(file_bytes)/1024**2:.2f} MB")
 with right:
-    st.markdown('<div class="step">02 · Desired sound</div>', unsafe_allow_html=True)
+    st.markdown('<div class="step">03 · Gentle-start preset</div>', unsafe_allow_html=True)
     preset = st.selectbox("Rising-volume preset", ["Extra gentle start", "Balanced", "Quickly audible", "Custom"],
                           help="The start and the final loudness are controlled separately.")
     st.markdown('<p class="hint">Extra gentle starts almost silent and stays smooth; balanced is more audible early; quickly audible reaches high volume sooner.</p>', unsafe_allow_html=True)
@@ -88,7 +128,7 @@ presets = {
 p_open, p_ten, p_full = presets[preset]
 
 with st.form("ringtone_settings", border=True):
-    st.markdown('<div class="step">03 · Build your ringtone</div>', unsafe_allow_html=True)
+    st.markdown('<div class="step">04 · Edit and master</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
         max_start = max(0.0, info["duration"] - 2.0)
@@ -110,12 +150,24 @@ with st.form("ringtone_settings", border=True):
                              help="Applied BEFORE the fade-in. Can be limited by peaks to avoid distortion.")
         compression = st.selectbox("Sound density", ["Balanced", "Off", "Strong"], index=0,
                                    help="Balanced evens out spikes so the loud section is audible without harsh peaks.")
+    st.markdown("**Additional editing tools**")
+    c3, c4 = st.columns(2)
+    with c3:
+        speed = st.slider("Playback speed · pitch preserved", 0.65, 1.50, 1.00, 0.05)
+        pitch = st.slider("Pitch shift (semitones)", -4, 4, 0, 1)
+        end_fade = st.slider("Fade out at the end (seconds)", 0.0, 2.0, 0.55, 0.05)
+    with c4:
+        bass = st.slider("Bass adjustment (dB)", -6, 6, 0, 1)
+        presence = st.slider("Clarity / presence (dB)", -4, 5, 0, 1)
+        channel_mode = st.selectbox("Channels", ["Stereo", "Mono"], index=0)
     do_process = st.form_submit_button("✨ Process ringtone", type="primary", use_container_width=True)
 
 settings = Settings(start_seconds=start, duration_seconds=clip, opening_db=opening,
                     ten_second_db=at_ten, full_at_seconds=full_at,
                     target_lufs=loudness, cleanup=cleanup, harshness=harshness,
-                    compression=compression)
+                    compression=compression, speed=speed, pitch_semitones=pitch,
+                    bass_db=bass, presence_db=presence, channel_mode=channel_mode,
+                    tail_fade_seconds=end_fade)
 
 if opening > at_ten:
     st.warning("Opening level is higher than the 10-second level. For a steadily rising ringtone, lower the opening level.")
@@ -135,16 +187,17 @@ if do_process:
         path = None
         try:
             with st.spinner("Cleaning, mastering, applying your volume curve, and exporting audio…"):
-                path = write_upload(file_bytes, Path(uploaded.name).suffix)
+                path = write_upload(file_bytes, Path(source["name"]).suffix)
                 audio = decode_selection(path, start, clip)
                 result, stats = process_audio(audio, settings)
                 # Create all three phone-ready files. WAV is also the preview file.
                 wav = encode_audio(result, "wav")
                 mp3 = encode_audio(result, "mp3")
                 m4r = encode_audio(result, "m4r")
+                m4a = encode_audio(result, "m4a")
                 st.session_state["result"] = {
                     "fingerprint": fingerprint, "settings": settings,
-                    "stats": stats, "wav": wav, "mp3": mp3, "m4r": m4r,
+                    "stats": stats, "wav": wav, "mp3": mp3, "m4r": m4r, "m4a": m4a,
                 }
         except (AudioError, ValueError, OSError) as exc:
             st.error(f"Couldn't process the clip: {exc}")
@@ -155,7 +208,7 @@ if do_process:
 result = st.session_state.get("result")
 if result and result["fingerprint"] == fingerprint:
     st.divider()
-    st.markdown('<div class="step">04 · Your finished ringtone</div>', unsafe_allow_html=True)
+    st.markdown('<div class="step">05 · Your finished ringtone</div>', unsafe_allow_html=True)
     if result["settings"] != settings:
         st.info("Showing the last processed version. Click **Process ringtone** to apply your latest adjustments.")
     st.audio(result["mp3"], format="audio/mpeg")
@@ -165,7 +218,7 @@ if result and result["fingerprint"] == fingerprint:
     m2.metric("At 10 seconds", f"{stats['gain_at_10s_db']:.1f} dB")
     m3.metric("Final peak", f"{stats['final_peak_dbfs']:.1f} dBFS")
     st.caption(f"Steady-section loudness: {stats['steady_lufs']:.1f} LUFS before the rising-volume curve. Loudness may be below target when peak safety limits it. Output is not normalized after the fade.")
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     with a:
         st.download_button("⬇ Android · MP3", result["mp3"], "RingRise_Ringtone_Android.mp3",
                            mime="audio/mpeg", use_container_width=True)
@@ -173,6 +226,9 @@ if result and result["fingerprint"] == fingerprint:
         st.download_button("⬇ iPhone · M4R", result["m4r"], "RingRise_Ringtone_iPhone.m4r",
                            mime="audio/mp4", use_container_width=True)
     with c:
+        st.download_button("⬇ Audio · M4A", result["m4a"], "RingRise_Audio.m4a",
+                           mime="audio/mp4", use_container_width=True)
+    with d:
         st.download_button("⬇ Master · WAV", result["wav"], "RingRise_Ringtone_Master.wav",
                            mime="audio/wav", use_container_width=True)
     st.success("Ready! Preview it with your phone's built-in speaker and ringtone volume setting.")

@@ -13,7 +13,8 @@ from audio_engine import (
     curve_preview, decode_selection, encode_audio, inspect_audio,
     process_audio, write_upload,
 )
-from youtube_import import fetch_youtube_audio, youtube_import_diagnostics
+from youtube_import import (AudioImportError, fetch_youtube_audio,
+                            probe_youtube_audio, youtube_import_diagnostics)
 
 st.set_page_config(page_title="RingRise Studio · Ringtone Maker", page_icon="🎧",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -49,6 +50,8 @@ if source_choice.startswith("🔗"):
         permitted = st.checkbox("I own this recording or have permission to download and edit it, including under the platform's terms.")
         fetch_clicked = st.form_submit_button("🔗 Fetch audio from link", type="primary", use_container_width=True)
     if fetch_clicked:
+        st.session_state.pop("youtube_probe", None)
+        st.session_state.pop("youtube_failure_report", None)
         if not permitted:
             st.warning("Please confirm you have the necessary permission before fetching the audio.")
         else:
@@ -61,10 +64,38 @@ if source_choice.startswith("🔗"):
                     finally:
                         incoming_path.unlink(missing_ok=True)
                     st.session_state["source"] = fetched
+                    st.session_state["youtube_probe"] = fetched.get("import_report")
                     st.session_state.pop("result", None)
                 st.success("Audio imported. Adjust the settings below.")
             except (AudioError, ValueError, OSError) as exc:
                 st.error(str(exc))
+                if isinstance(exc, AudioImportError):
+                    st.session_state["youtube_failure_report"] = exc.report
+    with st.expander("Advanced: check link availability without downloading"):
+        diagnostic_url = st.text_input("Link to check", value=youtube_url,
+                                       key="youtube_preflight_url")
+        if st.button("Check available audio formats"):
+            try:
+                with st.spinner("Checking YouTube metadata and available audio streams…"):
+                    st.session_state["youtube_probe"] = probe_youtube_audio(diagnostic_url)
+                    st.session_state.pop("youtube_failure_report", None)
+            except AudioImportError as exc:
+                st.error(str(exc))
+                st.session_state["youtube_failure_report"] = exc.report
+        if st.session_state.get("youtube_probe"):
+            report = st.session_state["youtube_probe"]
+            if "title" in report:
+                st.write("**Track:**", report["title"])
+            if "duration_seconds" in report:
+                st.write("**Duration:**", report["duration_seconds"], "seconds")
+            if "audio_formats" in report:
+                st.write("**Candidate formats:**")
+                st.dataframe(report["audio_formats"], hide_index=True)
+            if report.get("stage") == "complete":
+                st.success("Audio imported successfully.")
+    if st.session_state.get("youtube_failure_report"):
+        with st.expander("Failure details (safe to share)", expanded=True):
+            st.json(st.session_state["youtube_failure_report"])
     st.caption("Individual song/video links only (not playlists). YouTube may refuse automated downloading on free hosting. This app does not bypass sign-in, DRM, or access restrictions.")
     with st.expander("YouTube import diagnostics"):
         diagnostic = youtube_import_diagnostics()

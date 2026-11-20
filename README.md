@@ -55,3 +55,17 @@ A `.m4r` file is compatible with the iPhone ringtone format, but installing cust
 ## License
 
 MIT (code only). No sample copyrighted music is included.
+
+## YouTube Music troubleshooting
+
+Paste a single video or song URL, for example `https://music.youtube.com/watch?v=tScimk13hbE`.
+Extra tracking parameters such as `&drli=1` are removed automatically. The app
+ships `yt-dlp[default]` (including the compatible `yt-dlp-ejs` scripts) and
+a supported Node.js runtime from `nodejs-wheel`, so current YouTube JavaScript
+challenge extraction is available where the hosting environment permits it.
+
+If a download fails, expand **YouTube import diagnostics** to check the installed
+versions. YouTube can still require sign-in or deny requests from cloud hosting,
+and these restrictions are not bypassed. No cookies or user credentials are taken.
+If it fails on Streamlit Community Cloud, test the same permitted link using
+your locally hosted copy of the app and inspect the specific error category.

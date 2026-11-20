@@ -6,8 +6,11 @@ Turn your own music into a **gentle-start, loud-finish** ringtone. The volume cu
 
 ## Features
 
-- Upload MP3, WAV, M4A, AAC, FLAC, OGG, or OPUS (max 25 MB; source under 10 min).
+- Paste an individual YouTube / YouTube Music link to fetch an accessible audio stream, or upload MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, MP4, WEBM, MOV, or MKV (max 60 MB; source under 10 min).
 - Select the start and duration (up to 60 seconds).
+- Adjust playback speed (0.65×–1.5×) independently from pitch (±4 semitones).
+- Adjust bass, clarity/presence EQ, stereo/mono and end fade.
+- Download M4A audio as well as MP3, M4R and WAV.
 - Independently adjust opening level, level at 10 seconds, and time to reach full volume.
 - Preview the volume curve and listen to the processed ringtone.
 - Optional rumble cleanup, gentle denoising, harshness EQ, and compression.
@@ -43,7 +46,7 @@ streamlit run app.py
 
 Audio is decoded to stereo 44.1 kHz with FFmpeg. A conservative cleanup stage removes sub-bass rumble, optionally suppresses steady noise, and mildly attenuates harsh frequencies. Optional stereo-linked compression evens out spikes. Loudness is raised toward the requested LUFS target, with a -1.5 dBFS sample-peak ceiling; dynamic peaks can prevent hitting the exact LUFS goal. Only **after** that does the app apply a monotonic PCHIP volume curve, a tiny anti-click fade, and a tail fade. **It never normalizes after the curve**.
 
-There is no AI-source separation, no copyrighted music downloader, and no claim to restore audio quality lost in a poor recording. The application's server processes user-uploaded audio; temporary files are removed, but files exist in server RAM while the user's session is active. Do not treat public deployments as end-to-end encrypted or as suitable for highly confidential audio.
+YouTube import works only on individual accessible videos/songs for which you have permission to download and edit under applicable terms. It uses yt-dlp; downloads can fail when YouTube restricts cloud hosting IP addresses, sign-in is required, or platform access changes. No authentication, DRM bypass, cookies or proxies are provided. No claim is made to restore audio quality lost in a poor recording. The application's server processes user-uploaded audio; temporary files are removed, but files exist in server RAM while the user's session is active. Do not treat public deployments as end-to-end encrypted or as suitable for highly confidential audio.
 
 ### Important iPhone note
 

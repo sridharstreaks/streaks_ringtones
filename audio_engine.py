@@ -19,7 +19,7 @@ from scipy.ndimage import gaussian_filter, gaussian_filter1d, maximum_filter1d
 import pyloudnorm as pyln
 
 SAMPLE_RATE = 44100
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 MAX_SOURCE_SECONDS = 10 * 60
 MAX_RINGTONE_SECONDS = 60
 
@@ -40,6 +40,11 @@ class Settings:
     harshness: int = 35
     compression: str = "Balanced"
     tail_fade_seconds: float = 0.55
+    speed: float = 1.0
+    pitch_semitones: int = 0
+    bass_db: float = 0.0
+    presence_db: float = 0.0
+    channel_mode: str = "Stereo"
 
 
 def _run(command: list[str], *, payload: bytes | None = None, timeout: int = 90) -> bytes:
@@ -70,7 +75,7 @@ def inspect_audio(path: Path) -> dict:
         if not np.isfinite(duration) or duration < 2:
             raise AudioError("Could not detect audio duration.")
         if duration > MAX_SOURCE_SECONDS:
-            raise AudioError("Please upload a recording under 10 minutes.")
+            raise AudioError("Please choose media under 10 minutes.")
         return {"duration": duration,
                 "sample_rate": int(streams[0].get("sample_rate", 0)),
                 "channels": int(streams[0].get("channels", 0))}
@@ -80,9 +85,9 @@ def inspect_audio(path: Path) -> dict:
 
 def write_upload(data: bytes, suffix: str) -> Path:
     if not data or len(data) > MAX_UPLOAD_BYTES:
-        raise AudioError("Upload an audio file smaller than 25 MB.")
-    if suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}:
-        raise AudioError("Unsupported file extension. Try MP3, WAV, M4A, FLAC, OGG, or AAC.")
+        raise AudioError("Choose a media file smaller than 60 MB.")
+    if suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".mp4", ".webm", ".mov", ".mkv"}:
+        raise AudioError("Unsupported file extension. Try audio files or MP4/WEBM/MOV/MKV video.")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix.lower()) as tmp:
         tmp.write(data)
         return Path(tmp.name)
@@ -127,8 +132,33 @@ def _light_spectral_denoise(x: np.ndarray, strength: float) -> np.ndarray:
     return np.column_stack(channels).astype(np.float32)
 
 
+def change_speed_pitch(x: np.ndarray, speed: float, semitones: int) -> np.ndarray:
+    """Adjust tempo and pitch independently with FFmpeg."""
+    if not (0.65 <= speed <= 1.5 and -4 <= semitones <= 4):
+        raise AudioError("Speed or pitch control is outside its supported range.")
+    if speed == 1.0 and semitones == 0:
+        return x
+    pitch_factor = 2.0 ** (semitones / 12.0)
+    filters = []
+    if semitones:
+        filters.extend([f"asetrate={SAMPLE_RATE * pitch_factor:.4f}", f"aresample={SAMPLE_RATE}"])
+    filters.append(f"atempo={speed / pitch_factor:.6f}")
+    payload = np.asarray(x, dtype="<f4", order="C").tobytes()
+    raw = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-f", "f32le", "-ar", str(SAMPLE_RATE), "-ac", "2", "-i", "pipe:0",
+                "-af", ",".join(filters), "-ar", str(SAMPLE_RATE), "-ac", "2",
+                "-c:a", "pcm_f32le", "-f", "f32le", "pipe:1"],
+               payload=payload, timeout=120)
+    samples = np.frombuffer(raw, dtype="<f4")
+    if samples.size < SAMPLE_RATE * 2 or samples.size % 2:
+        raise AudioError("Speed/pitch processing produced an invalid audio clip.")
+    return samples.reshape(-1, 2).copy()
+
+
 def clean_audio(x: np.ndarray, setting: Settings) -> np.ndarray:
-    if setting.cleanup == "Off" and setting.harshness == 0:
+    if (setting.cleanup == "Off" and setting.harshness == 0 and
+            setting.bass_db == 0 and setting.presence_db == 0 and
+            setting.channel_mode == "Stereo"):
         return x.copy()
     y = x.copy()
     if setting.cleanup != "Off":
@@ -140,6 +170,12 @@ def clean_audio(x: np.ndarray, setting: Settings) -> np.ndarray:
             y = _light_spectral_denoise(y, 0.55)
     if setting.harshness:
         y = _peaking_eq(y, 3700, db_gain=-3.3 * setting.harshness / 100, q=0.7)
+    if setting.bass_db:
+        y = _peaking_eq(y, 140, db_gain=setting.bass_db, q=0.75)
+    if setting.presence_db:
+        y = _peaking_eq(y, 2400, db_gain=setting.presence_db, q=0.75)
+    if setting.channel_mode == "Mono":
+        y = np.mean(y, axis=1, keepdims=True).repeat(2, axis=1).astype(np.float32)
     return y
 
 
@@ -242,6 +278,7 @@ def apply_ringtone_curve(x: np.ndarray, settings: Settings) -> tuple[np.ndarray,
 
 
 def process_audio(x: np.ndarray, settings: Settings) -> tuple[np.ndarray, dict]:
+    x = change_speed_pitch(x, settings.speed, settings.pitch_semitones)
     y = clean_audio(x, settings)
     y = compress_audio(y, settings.compression)
     y, stats = master_loudness(y, settings.target_lufs)
@@ -287,6 +324,12 @@ def encode_audio(x: np.ndarray, kind: str) -> bytes:
     if kind == "wav":
         return _run(common + ["-c:a", "pcm_s24le", "-f", "wav", "pipe:1"],
                     payload=payload)
+    if kind == "m4a":
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ringtone.m4a"
+            _run(common + ["-c:a", "aac", "-b:a", "256k", "-f", "ipod", str(path)],
+                 payload=payload)
+            return path.read_bytes()
     if kind == "m4r":
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "ringtone.m4r"
